@@ -4,21 +4,24 @@ ESP8266 web server - platform-dependent routines, FreeRTOS version
 
 Thanks to my collague at Espressif for writing the foundations of this code.
 */
+#include "platform.h"
 #ifdef FREERTOS
 
 
+#include "httpd-platform.h"
 #include <esp8266.h>
 #include "httpd.h"
-#include "platform.h"
-#include "httpd-platform.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 
+#ifdef ESP32
+#include "lwip/sockets.h"
+#else
 #include "lwip/lwip/sockets.h"
-
+#endif
 
 static int httpPort;
 static int httpMaxConnCt;
@@ -130,6 +133,7 @@ static void platHttpServerTask(void *pvParameters) {
 				FD_SET(rconn[x].fd, &readset);
 				if (rconn[x].needWriteDoneNotif) FD_SET(rconn[x].fd, &writeset);
 				if (rconn[x].fd>maxfdp) maxfdp=rconn[x].fd;
+//				printf("Sel add %d (write %d)\n", (int)rconn[x].fd, rconn[x].needWriteDoneNotif);
 			} else {
 				socketsFull=0;
 			}
@@ -138,10 +142,12 @@ static void platHttpServerTask(void *pvParameters) {
 		if (!socketsFull) {
 			FD_SET(listenfd, &readset);
 			if (listenfd>maxfdp) maxfdp=listenfd;
+//			printf("Sel add listen %d\n", listenfd);
 		}
 
 		//polling all exist client handle,wait until readable/writable
-		ret = select(maxfdp+1, &readset, &writeset, NULL, NULL);//&timeout
+		ret = lwip_select(maxfdp+1, &readset, &writeset, NULL, NULL);//&timeout
+//		printf("sel ret\n");
 		if(ret > 0){
 			//See if we need to accept a new connection
 			if (FD_ISSET(listenfd, &readset)) {
@@ -249,6 +255,24 @@ static void platHttpServerTask(void *pvParameters) {
 #endif
 }
 
+
+HttpdPlatTimerHandle httpdPlatTimerCreate(const char *name, int periodMs, int autoreload, void (*callback)(void *arg), void *ctx) {
+	TimerHandle_t ret;
+	ret=xTimerCreate(name, pdMS_TO_TICKS(periodMs), autoreload?pdTRUE:pdFALSE, ctx, callback);
+	return (HttpdPlatTimerHandle)ret;
+}
+
+void httpdPlatTimerStart(HttpdPlatTimerHandle timer) {
+	xTimerStart((TimerHandle_t)timer, 0);
+}
+
+void httpdPlatTimerStop(HttpdPlatTimerHandle timer) {
+	xTimerStop((TimerHandle_t)timer, 0);
+}
+
+void httpdPlatTimerDelete(HttpdPlatTimerHandle timer) {
+	xTimerDelete((TimerHandle_t)timer, 0);
+}
 
 
 //Initialize listening socket, do general initialization
